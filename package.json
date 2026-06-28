@@ -1,0 +1,20 @@
+{
+  "name": "symposium",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deshmukh-anurag/Symposium.git"
+  },
+  "author": "",
+  "workspaces": ["apps/*", "packages/*"],
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/deshmukh-anurag/Symposium/issues"
+  },
+  "homepage": "https://github.com/deshmukh-anurag/Symposium#readme"
+}
