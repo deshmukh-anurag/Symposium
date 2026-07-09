@@ -1,5 +1,6 @@
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
+import { ClientMsg, type ServerMsg } from "@symposium/protocol";
 
 const app = express();
 const PORT = 4000;
@@ -18,18 +19,17 @@ const wss = new WebSocketServer({ server });
 type Client = { socket: WebSocket; name: string };
 const rooms = new Map<string, Set<Client>>();
 
-function send(socket: WebSocket, msg: object) {
+// outbound is now TYPE-CHECKED: `msg` must be a valid ServerMsg
+function send(socket: WebSocket, msg: ServerMsg) {
   socket.send(JSON.stringify(msg));
 }
 
-// fan-out: send ANY message to everyone in a room  (the reusable primitive)
-function broadcast(roomId: string, msg: object) {
+function broadcast(roomId: string, msg: ServerMsg) {
   const clients = rooms.get(roomId);
   if (!clients) return;
   for (const c of clients) send(c.socket, msg);
 }
 
-// presence now RIDES on broadcast
 function broadcastPresence(roomId: string) {
   const clients = rooms.get(roomId);
   if (!clients) return;
@@ -42,31 +42,32 @@ wss.on("connection", (socket) => {
   let myRoom: string | null = null;
 
   socket.on("message", (data) => {
-    let msg: any;
+    // 1. is it valid JSON at all?
+    let raw: unknown;
     try {
-      msg = JSON.parse(data.toString());
+      raw = JSON.parse(data.toString());
     } catch {
       return send(socket, { type: "error", message: "messages must be JSON" });
     }
 
+    // 2. does it match a known message shape? (Zod validates at runtime)
+    const result = ClientMsg.safeParse(raw);
+    if (!result.success) {
+      return send(socket, { type: "error", message: "invalid message shape" });
+    }
+    const msg = result.data;   // ✅ fully typed from here — no more `any`
+
+    // 3. handle it — the typeof hand-checks are GONE; Zod guarantees the shape
     if (msg.type === "join") {
-      if (typeof msg.roomId !== "string" || typeof msg.name !== "string") {
-        return send(socket, { type: "error", message: "join needs roomId and name" });
-      }
       me = { socket, name: msg.name };
       myRoom = msg.roomId;
       if (!rooms.has(myRoom)) rooms.set(myRoom, new Set());
       rooms.get(myRoom)!.add(me);
       console.log(`➡️  ${me.name} joined "${myRoom}"`);
       broadcastPresence(myRoom);
-    }
-
-    else if (msg.type === "chat") {
+    } else if (msg.type === "chat") {
       if (!me || !myRoom) {
         return send(socket, { type: "error", message: "join a room first" });
-      }
-      if (typeof msg.text !== "string") {
-        return send(socket, { type: "error", message: "chat needs text" });
       }
       console.log(`💬 ${me.name} in "${myRoom}": ${msg.text}`);
       broadcast(myRoom, { type: "chat", roomId: myRoom, from: me.name, text: msg.text });
