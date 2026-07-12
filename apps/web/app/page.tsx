@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ClientMsg, ServerMsg } from "@symposium/protocol";
+import type { ClientMsg, ServerMsg, Card } from "@symposium/protocol";
 
 const WS_URL = "ws://localhost:4000";
 
@@ -12,18 +12,18 @@ export default function Home() {
   const [name, setName] = useState("");
   const [roomId, setRoomId] = useState("library");
   const [members, setMembers] = useState<string[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
   const [chat, setChat] = useState<ChatLine[]>([]);
   const [draft, setDraft] = useState("");
+  const [cardDraft, setCardDraft] = useState("");
   const [error, setError] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  // auto-scroll chat to the newest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat]);
 
-  // the `msg` here is typed as ClientMsg — the SAME schema the server validates against
   function sendMsg(msg: ClientMsg) {
     wsRef.current?.send(JSON.stringify(msg));
   }
@@ -47,17 +47,22 @@ export default function Home() {
     };
 
     ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data) as ServerMsg; // shape guaranteed by the shared type
+      const msg = JSON.parse(event.data) as ServerMsg;
       if (msg.type === "presence") {
         setMembers(msg.members);
       } else if (msg.type === "chat") {
         setChat((prev) => [...prev, { from: msg.from, text: msg.text }]);
+      } else if (msg.type === "board.snapshot") {
+        setCards(msg.cards); // catch up on cards that already exist
+      } else if (msg.type === "card.created") {
+        setCards((prev) => [...prev, msg.card]); // a new card appeared, live
       }
     };
 
     ws.onclose = () => {
       setJoined(false);
       setMembers([]);
+      setCards([]);
     };
   }
 
@@ -71,6 +76,13 @@ export default function Home() {
     if (!text) return;
     sendMsg({ type: "chat", text });
     setDraft("");
+  }
+
+  function addCard() {
+    const text = cardDraft.trim();
+    if (!text) return;
+    sendMsg({ type: "card.create", text });
+    setCardDraft("");
   }
 
   // ---------------- JOIN SCREEN ----------------
@@ -138,8 +150,8 @@ export default function Home() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {/* presence sidebar */}
-        <aside className="w-56 shrink-0 border-r border-neutral-300 p-4 dark:border-neutral-800">
+        {/* presence */}
+        <aside className="w-48 shrink-0 border-r border-neutral-300 p-4 dark:border-neutral-800">
           <h2 className="mb-3 text-xs uppercase tracking-wide text-neutral-500">Who&apos;s here</h2>
           <ul className="flex flex-col gap-1.5">
             {members.map((m, i) => (
@@ -152,8 +164,49 @@ export default function Home() {
           </ul>
         </aside>
 
+        {/* THE BOARD — the shared research artifact */}
+        <section className="flex min-h-0 flex-1 flex-col border-r border-neutral-300 dark:border-neutral-800">
+          <div className="flex gap-2 border-b border-neutral-300 p-3 dark:border-neutral-800">
+            <input
+              value={cardDraft}
+              onChange={(e) => setCardDraft(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addCard()}
+              placeholder="New card — a source, note, or idea…"
+              className="flex-1 border border-neutral-400 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-neutral-700"
+            />
+            <button
+              onClick={addCard}
+              className="border border-foreground px-4 py-2 text-sm transition-colors hover:bg-foreground hover:text-background"
+            >
+              Add card
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {cards.length === 0 ? (
+              <p className="text-sm text-neutral-500">The board is empty. Add the first card ↑</p>
+            ) : (
+              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]">
+                {cards.map((card) => (
+                  <div
+                    key={card.id}
+                    className="flex flex-col border border-neutral-300 p-3 dark:border-neutral-800"
+                  >
+                    <p className="flex-1 text-sm break-words">{card.text}</p>
+                    <p className="mt-3 font-mono text-[10px] uppercase tracking-wide text-neutral-500">
+                      by {card.createdBy} · #{card.seq}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* chat */}
-        <section className="flex min-h-0 flex-1 flex-col">
+        <aside className="flex w-72 shrink-0 flex-col">
+          <h2 className="border-b border-neutral-300 px-4 py-3 text-xs uppercase tracking-wide text-neutral-500 dark:border-neutral-800">
+            Chat
+          </h2>
           <div className="flex-1 overflow-y-auto p-4">
             {chat.length === 0 ? (
               <p className="text-sm text-neutral-500">No messages yet. Say hi 👋</p>
@@ -181,17 +234,17 @@ export default function Home() {
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="Type a message…"
+              placeholder="Message…"
               className="flex-1 border border-neutral-400 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-neutral-700"
             />
             <button
               type="submit"
-              className="border border-foreground px-4 py-2 text-sm transition-colors hover:bg-foreground hover:text-background"
+              className="border border-foreground px-3 py-2 text-sm transition-colors hover:bg-foreground hover:text-background"
             >
               Send
             </button>
           </form>
-        </section>
+        </aside>
       </div>
     </main>
   );
