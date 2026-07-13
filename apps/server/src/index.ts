@@ -1,14 +1,23 @@
+import "dotenv/config";
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import bcrypt from "bcryptjs";
+import { prisma } from "@symposium/db";
 import { ClientMsg, type ServerMsg, type Card } from "@symposium/protocol";
-
+import handleSignup from "./controllers/signup";
 const app = express();
 const PORT = 4000;
+
+app.use(express.json()); 
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "symposium-server" });
 });
+
+app.post("/auth/signup", handleSignup);
+
 
 const server = app.listen(PORT, () => {
   console.log(`🏛️  Symposium server alive on http://localhost:${PORT}`);
@@ -18,12 +27,9 @@ const wss = new WebSocketServer({ server });
 
 // ---- in-memory room state ----
 type Client = { socket: WebSocket; name: string };
-// A room now has a human `name` (display, not unique) separate from its map key `roomId`
-// (system-generated, unique). Plus the board's cards and the `seq` logical clock.
 type Room = { name: string; clients: Set<Client>; cards: Card[]; seq: number };
 const rooms = new Map<string, Room>();
 
-// a short, shareable, typeable id (not a raw UUID) — collision-checked against the registry
 function newRoomId(): string {
   let id: string;
   do {
