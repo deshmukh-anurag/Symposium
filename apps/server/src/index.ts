@@ -18,18 +18,18 @@ const wss = new WebSocketServer({ server });
 
 // ---- in-memory room state ----
 type Client = { socket: WebSocket; name: string };
-// A room now holds people, the board's cards, AND a `seq` — its logical clock, which
-// ticks once per op. This ordering is what makes concurrent edits converge later (M2 §5.4).
-type Room = { clients: Set<Client>; cards: Card[]; seq: number };
+// A room now has a human `name` (display, not unique) separate from its map key `roomId`
+// (system-generated, unique). Plus the board's cards and the `seq` logical clock.
+type Room = { name: string; clients: Set<Client>; cards: Card[]; seq: number };
 const rooms = new Map<string, Room>();
 
-function getRoom(roomId: string): Room {
-  let room = rooms.get(roomId);
-  if (!room) {
-    room = { clients: new Set(), cards: [], seq: 0 };
-    rooms.set(roomId, room);
-  }
-  return room;
+// a short, shareable, typeable id (not a raw UUID) — collision-checked against the registry
+function newRoomId(): string {
+  let id: string;
+  do {
+    id = randomUUID().replace(/-/g, "").slice(0, 6);
+  } while (rooms.has(id));
+  return id;
 }
 
 // outbound is TYPE-CHECKED: `msg` must be a valid ServerMsg
@@ -68,26 +68,41 @@ wss.on("connection", (socket) => {
     }
     const msg = result.data;
 
-    if (msg.type === "join") {
+    if (msg.type === "room.create") {
+      // the human names it; WE mint the unique id. Creating does not join — the client joins next.
+      const roomId = newRoomId();
+      rooms.set(roomId, { name: msg.name, clients: new Set(), cards: [], seq: 0 });
+      console.log(`🆕 room "${msg.name}" created → ${roomId}`);
+      send(socket, { type: "room.created", roomId, name: msg.name });
+    } else if (msg.type === "join") {
+      const room = rooms.get(msg.roomId);
+      if (!room) {
+        // unknown code is an ERROR, not an implicit create (no ghost rooms)
+        return send(socket, {
+          type: "error",
+          code: "room_not_found",
+          message: `No room with id "${msg.roomId}".`,
+        });
+      }
       me = { socket, name: msg.name };
       myRoom = msg.roomId;
-      const room = getRoom(myRoom);
       room.clients.add(me);
-      console.log(`➡️  ${me.name} joined "${myRoom}"`);
-      // hand the joiner the current board so late arrivals see cards that already exist
-      send(socket, { type: "board.snapshot", roomId: myRoom, cards: room.cards });
+      console.log(`➡️  ${me.name} joined "${room.name}" (${myRoom})`);
+      // hand the joiner the room's name + current board (late arrivals see existing cards)
+      send(socket, { type: "board.snapshot", roomId: myRoom, name: room.name, cards: room.cards });
       broadcastPresence(myRoom);
     } else if (msg.type === "chat") {
       if (!me || !myRoom) {
         return send(socket, { type: "error", message: "join a room first" });
       }
-      console.log(`💬 ${me.name} in "${myRoom}": ${msg.text}`);
+      console.log(`💬 ${me.name} in ${myRoom}: ${msg.text}`);
       broadcast(myRoom, { type: "chat", roomId: myRoom, from: me.name, text: msg.text });
     } else if (msg.type === "card.create") {
       if (!me || !myRoom) {
         return send(socket, { type: "error", message: "join a room first" });
       }
-      const room = getRoom(myRoom);
+      const room = getRoomOrNull(myRoom);
+      if (!room) return;
       const card: Card = {
         id: randomUUID(),
         text: msg.text,
@@ -95,7 +110,7 @@ wss.on("connection", (socket) => {
         seq: ++room.seq, // the room's logical clock ticks once, giving this op a global order
       };
       room.cards.push(card);
-      console.log(`🗂️  ${me.name} created a card in "${myRoom}" (seq ${card.seq})`);
+      console.log(`🗂️  ${me.name} created a card in ${myRoom} (seq ${card.seq})`);
       broadcast(myRoom, { type: "card.created", roomId: myRoom, card });
     }
   });
@@ -103,8 +118,12 @@ wss.on("connection", (socket) => {
   socket.on("close", () => {
     if (me && myRoom) {
       rooms.get(myRoom)?.clients.delete(me);
-      console.log(`⬅️  ${me.name} left "${myRoom}"`);
+      console.log(`⬅️  ${me.name} left ${myRoom}`);
       broadcastPresence(myRoom);
     }
   });
 });
+
+function getRoomOrNull(roomId: string): Room | null {
+  return rooms.get(roomId) ?? null;
+}
