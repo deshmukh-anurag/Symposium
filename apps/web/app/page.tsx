@@ -2,250 +2,194 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ClientMsg, ServerMsg, Card } from "@symposium/protocol";
+import { Sidebar } from "@/components/Sidebar";
+import { Lobby } from "@/components/Lobby";
+import { RoomView } from "@/components/RoomView";
+import type { ChatLine } from "@/components/Chat";
+import {
+  loadRecents,
+  saveRecent,
+  loadUserName,
+  saveUserName,
+  saveSnapshot,
+  loadSnapshot,
+  type RoomRef,
+} from "@/lib/history";
 
 const WS_URL = "ws://localhost:4000";
 
-type ChatLine = { from: string; text: string };
-
 export default function Home() {
-  const [joined, setJoined] = useState(false);
-  const [name, setName] = useState("");
-  const [roomId, setRoomId] = useState("library");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [userName, setUserName] = useState("");
+  const [recents, setRecents] = useState<RoomRef[]>([]);
+  const [room, setRoom] = useState<{ roomId: string; name: string } | null>(null);
+  const [connected, setConnected] = useState(false); // false while viewing a frozen (left) room
   const [members, setMembers] = useState<string[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [chat, setChat] = useState<ChatLine[]>([]);
-  const [draft, setDraft] = useState("");
+  const [chatDraft, setChatDraft] = useState("");
   const [cardDraft, setCardDraft] = useState("");
   const [error, setError] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const joinAsRef = useRef(""); // the display name to join with (avoids stale closures)
 
+  // localStorage isn't available during SSR → load per-browser state after mount
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat]);
+    setUserName(loadUserName());
+    setRecents(loadRecents());
+  }, []);
 
-  function sendMsg(msg: ClientMsg) {
-    wsRef.current?.send(JSON.stringify(msg));
+  // while connected, keep the room's last-seen snapshot fresh so leaving freezes an accurate view
+  useEffect(() => {
+    if (connected && room) {
+      saveSnapshot(room.roomId, { name: room.name, cards, chat, members });
+    }
+  }, [connected, room, cards, chat, members]);
+
+  function changeUserName(name: string) {
+    setUserName(name);
+    saveUserName(name);
   }
 
-  function join() {
-    if (!name.trim() || !roomId.trim()) {
-      setError("Enter a name and a room to join.");
-      return;
+  function remember(ref: RoomRef) {
+    setRecents(saveRecent(ref));
+  }
+
+  function handleServerMsg(msg: ServerMsg) {
+    if (msg.type === "room.created") {
+      remember({ roomId: msg.roomId, name: msg.name });
+      wsRef.current?.send(
+        JSON.stringify({ type: "join", roomId: msg.roomId, name: joinAsRef.current } satisfies ClientMsg),
+      );
+    } else if (msg.type === "board.snapshot") {
+      setRoom({ roomId: msg.roomId, name: msg.name });
+      setConnected(true); // we are now live
+      setCards(msg.cards);
+      setMembers([]);
+      setChat([]);
+      setError("");
+      remember({ roomId: msg.roomId, name: msg.name });
+    } else if (msg.type === "presence") {
+      setMembers(msg.members);
+    } else if (msg.type === "chat") {
+      setChat((prev) => [...prev, { from: msg.from, text: msg.text }]);
+    } else if (msg.type === "card.created") {
+      setCards((prev) => [...prev, msg.card]);
+    } else if (msg.type === "error") {
+      setError(msg.message);
     }
+  }
+
+  // open a fresh socket (closing any current one — a socket is bound to one room) + send the first message
+  function openSocket(firstMessage: ClientMsg) {
+    wsRef.current?.close();
     setError("");
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
-
-    ws.onopen = () => {
-      sendMsg({ type: "join", roomId: roomId.trim(), name: name.trim() });
-      setJoined(true);
-    };
-
-    ws.onerror = () => {
-      setError("Couldn't reach the server — is the backend running on :4000?");
-    };
-
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data) as ServerMsg;
-      if (msg.type === "presence") {
-        setMembers(msg.members);
-      } else if (msg.type === "chat") {
-        setChat((prev) => [...prev, { from: msg.from, text: msg.text }]);
-      } else if (msg.type === "board.snapshot") {
-        setCards(msg.cards); // catch up on cards that already exist
-      } else if (msg.type === "card.created") {
-        setCards((prev) => [...prev, msg.card]); // a new card appeared, live
-      }
-    };
-
-    ws.onclose = () => {
-      setJoined(false);
-      setMembers([]);
-      setCards([]);
-    };
+    ws.onopen = () => ws.send(JSON.stringify(firstMessage));
+    ws.onmessage = (e) => handleServerMsg(JSON.parse(e.data) as ServerMsg);
+    ws.onerror = () => setError("Couldn't reach the server — is the backend running on :4000?");
   }
 
-  function leave() {
+  function createRoom(name: string) {
+    if (!userName.trim()) return setError("Set your name in the sidebar first.");
+    if (!name.trim()) return setError("Give the room a name.");
+    joinAsRef.current = userName.trim();
+    openSocket({ type: "room.create", name: name.trim() });
+  }
+
+  // go live in a room by code (from the lobby, or the Join button in a frozen view)
+  function joinRoom(roomId: string) {
+    if (!userName.trim()) return setError("Set your name in the sidebar first.");
+    if (!roomId.trim()) return setError("Enter a room code.");
+    joinAsRef.current = userName.trim();
+    openSocket({ type: "join", roomId: roomId.trim(), name: userName.trim() });
+  }
+
+  // open a room from history WITHOUT connecting → frozen, read-only, last-seen view
+  function openRecent(roomId: string, nameHint: string) {
     wsRef.current?.close();
+    wsRef.current = null;
+    const snap = loadSnapshot(roomId);
+    setRoom({ roomId, name: snap?.name ?? nameHint });
+    setConnected(false);
+    setCards(snap?.cards ?? []);
+    setChat(snap?.chat ?? []);
+    setMembers(snap?.members ?? []);
+    setError("");
+  }
+
+  // Leave = close the connection but FREEZE in place (keep showing the last-seen room, read-only)
+  function leaveRoom() {
+    if (room) saveSnapshot(room.roomId, { name: room.name, cards, chat, members });
+    wsRef.current?.close();
+    wsRef.current = null;
+    setConnected(false);
+  }
+
+  // "+ New room" → drop back to the lobby
+  function goToLobby() {
+    wsRef.current?.close();
+    wsRef.current = null;
+    setRoom(null);
+    setConnected(false);
+    setMembers([]);
+    setCards([]);
     setChat([]);
+    setError("");
   }
 
   function sendChat() {
-    const text = draft.trim();
+    const text = chatDraft.trim();
     if (!text) return;
-    sendMsg({ type: "chat", text });
-    setDraft("");
+    wsRef.current?.send(JSON.stringify({ type: "chat", text } satisfies ClientMsg));
+    setChatDraft("");
   }
 
   function addCard() {
     const text = cardDraft.trim();
     if (!text) return;
-    sendMsg({ type: "card.create", text });
+    wsRef.current?.send(JSON.stringify({ type: "card.create", text } satisfies ClientMsg));
     setCardDraft("");
   }
 
-  // ---------------- JOIN SCREEN ----------------
-  if (!joined) {
-    return (
-      <main className="flex flex-1 items-center justify-center p-6">
-        <div className="w-full max-w-sm border border-neutral-300 dark:border-neutral-800">
-          <div className="border-b border-neutral-300 px-5 py-4 dark:border-neutral-800">
-            <h1 className="font-mono text-lg font-semibold tracking-tight">SYMPOSIUM</h1>
-            <p className="mt-1 text-xs text-neutral-500">research with friends — join a room</p>
-          </div>
-          <div className="flex flex-col gap-4 p-5">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs uppercase tracking-wide text-neutral-500">Your name</span>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && join()}
-                placeholder="anurag"
-                className="border border-neutral-400 bg-transparent px-3 py-2 outline-none focus:border-foreground dark:border-neutral-700"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs uppercase tracking-wide text-neutral-500">Room</span>
-              <input
-                value={roomId}
-                onChange={(e) => setRoomId(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && join()}
-                placeholder="library"
-                className="border border-neutral-400 bg-transparent px-3 py-2 outline-none focus:border-foreground dark:border-neutral-700"
-              />
-            </label>
-            <button
-              onClick={join}
-              className="border border-foreground px-4 py-2 text-sm font-medium transition-colors hover:bg-foreground hover:text-background"
-            >
-              Join room →
-            </button>
-            {error && (
-              <p className="bg-foreground px-3 py-2 text-sm text-background">{error}</p>
-            )}
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  // ---------------- ROOM SCREEN ----------------
   return (
-    <main className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center justify-between border-b border-neutral-300 px-5 py-3 dark:border-neutral-800">
-        <div>
-          <span className="font-mono text-sm font-semibold">SYMPOSIUM</span>
-          <span className="text-sm text-neutral-500"> / {roomId}</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-xs text-neutral-500">{members.length} online</span>
-          <button
-            onClick={leave}
-            className="border border-neutral-400 px-3 py-1 text-xs transition-colors hover:bg-foreground hover:text-background dark:border-neutral-700"
-          >
-            Leave
-          </button>
-        </div>
-      </header>
+    <div className="flex min-h-0 flex-1">
+      <Sidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((v) => !v)}
+        recents={recents}
+        currentRoomId={room?.roomId ?? null}
+        userName={userName}
+        onUserNameChange={changeUserName}
+        onOpenRoom={(roomId) => {
+          const ref = recents.find((r) => r.roomId === roomId);
+          openRecent(roomId, ref?.name ?? roomId);
+        }}
+        onNewRoom={goToLobby}
+      />
 
-      <div className="flex min-h-0 flex-1">
-        {/* presence */}
-        <aside className="w-48 shrink-0 border-r border-neutral-300 p-4 dark:border-neutral-800">
-          <h2 className="mb-3 text-xs uppercase tracking-wide text-neutral-500">Who&apos;s here</h2>
-          <ul className="flex flex-col gap-1.5">
-            {members.map((m, i) => (
-              <li key={i} className="flex items-center gap-2 text-sm">
-                <span className="inline-block h-2 w-2 bg-foreground" />
-                {m}
-                {m === name && <span className="text-neutral-500">(you)</span>}
-              </li>
-            ))}
-          </ul>
-        </aside>
-
-        {/* THE BOARD — the shared research artifact */}
-        <section className="flex min-h-0 flex-1 flex-col border-r border-neutral-300 dark:border-neutral-800">
-          <div className="flex gap-2 border-b border-neutral-300 p-3 dark:border-neutral-800">
-            <input
-              value={cardDraft}
-              onChange={(e) => setCardDraft(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addCard()}
-              placeholder="New card — a source, note, or idea…"
-              className="flex-1 border border-neutral-400 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-neutral-700"
-            />
-            <button
-              onClick={addCard}
-              className="border border-foreground px-4 py-2 text-sm transition-colors hover:bg-foreground hover:text-background"
-            >
-              Add card
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4">
-            {cards.length === 0 ? (
-              <p className="text-sm text-neutral-500">The board is empty. Add the first card ↑</p>
-            ) : (
-              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]">
-                {cards.map((card) => (
-                  <div
-                    key={card.id}
-                    className="flex flex-col border border-neutral-300 p-3 dark:border-neutral-800"
-                  >
-                    <p className="flex-1 text-sm break-words">{card.text}</p>
-                    <p className="mt-3 font-mono text-[10px] uppercase tracking-wide text-neutral-500">
-                      by {card.createdBy} · #{card.seq}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* chat */}
-        <aside className="flex w-72 shrink-0 flex-col">
-          <h2 className="border-b border-neutral-300 px-4 py-3 text-xs uppercase tracking-wide text-neutral-500 dark:border-neutral-800">
-            Chat
-          </h2>
-          <div className="flex-1 overflow-y-auto p-4">
-            {chat.length === 0 ? (
-              <p className="text-sm text-neutral-500">No messages yet. Say hi 👋</p>
-            ) : (
-              <ul className="flex flex-col gap-3">
-                {chat.map((line, i) => (
-                  <li key={i}>
-                    <span className="font-mono text-xs text-neutral-500">{line.from}</span>
-                    <div className="mt-0.5 border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-800">
-                      {line.text}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div ref={bottomRef} />
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              sendChat();
-            }}
-            className="flex gap-2 border-t border-neutral-300 p-3 dark:border-neutral-800"
-          >
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Message…"
-              className="flex-1 border border-neutral-400 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-neutral-700"
-            />
-            <button
-              type="submit"
-              className="border border-foreground px-3 py-2 text-sm transition-colors hover:bg-foreground hover:text-background"
-            >
-              Send
-            </button>
-          </form>
-        </aside>
-      </div>
-    </main>
+      {room ? (
+        <RoomView
+          roomName={room.name}
+          roomId={room.roomId}
+          userName={userName}
+          frozen={!connected}
+          members={members}
+          cards={cards}
+          cardDraft={cardDraft}
+          onCardDraftChange={setCardDraft}
+          onAddCard={addCard}
+          chat={chat}
+          chatDraft={chatDraft}
+          onChatDraftChange={setChatDraft}
+          onSendChat={sendChat}
+          onLeave={leaveRoom}
+          onJoin={() => joinRoom(room.roomId)}
+        />
+      ) : (
+        <Lobby userName={userName} error={error} onCreate={createRoom} onJoin={joinRoom} />
+      )}
+    </div>
   );
 }
