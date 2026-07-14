@@ -3,9 +3,6 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@symposium/db";
 import type { Request, Response } from "express";
 
-const handleSignup = async (req: Request, res: Response) => {
-
-
 const SignupInput = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(40),
