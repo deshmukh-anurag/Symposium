@@ -1,0 +1,17 @@
+# Local Postgres for Symposium
+services:
+  db:
+    image: pgvector/pgvector:pg17      
+    container_name: symposium-db
+    restart: unless-stopped
+    environment:                       
+      POSTGRES_USER: symposium
+      POSTGRES_PASSWORD: symposium
+      POSTGRES_DB: symposium
+    ports:
+      - "5432:5432"                   
+    volumes:
+      - symposium-db-data:/var/lib/postgresql/data   # ← data survives restarts (the whole point)
+
+volumes:
+  symposium-db-data:

@@ -1,0 +1,17 @@
+generator client {
+  provider = "prisma-client-js"       // generate a type-safe TS client
+  output   = "../src/generated/prisma" // explicit path → avoids monorepo node_modules hoisting issues
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")      // read the connection string from the environment
+}
+
+model User {
+  id        String   @id @default(uuid())   // primary key, auto-generated UUID
+  email     String   @unique                // no two users share an email
+  name      String                          // display name
+  password  String                          // a HASH — never the plaintext (step 3)
+  createdAt DateTime @default(now())
+}
