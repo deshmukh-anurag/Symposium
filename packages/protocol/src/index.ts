@@ -4,7 +4,6 @@ import { z } from "zod";
 export const JoinMsg = z.object({
   type: z.literal("join"),
   roomId: z.string().min(1),
-  name: z.string().min(1).max(40),
 });
 
 export const ChatMsg = z.object({
