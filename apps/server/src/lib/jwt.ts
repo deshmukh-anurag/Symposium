@@ -1,7 +1,8 @@
 import jwt from "jsonwebtoken";
 
-const SECRET = process.env.JWT_SECRET;
-if (!SECRET) throw new Error("JWT_SECRET is not set"); 
+const SECRET: string = process.env.JWT_SECRET ?? "";
+if (!SECRET) throw new Error("JWT_SECRET is not set");
+
 
 export type TokenPayload = { sub: string; name: string };
 
