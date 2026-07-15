@@ -1,12 +1,13 @@
 import type { RoomRef } from "@/lib/history";
+import { identityName, type Identity } from "@/lib/auth";
 
 type SidebarProps = {
   open: boolean;
   onToggle: () => void;
   recents: RoomRef[];
   currentRoomId: string | null;
-  userName: string;
-  onUserNameChange: (value: string) => void;
+  identity: Identity;
+  onLogout: () => void;
   onOpenRoom: (roomId: string) => void;
   onNewRoom: () => void;
 };
@@ -16,8 +17,8 @@ export function Sidebar({
   onToggle,
   recents,
   currentRoomId,
-  userName,
-  onUserNameChange,
+  identity,
+  onLogout,
   onOpenRoom,
   onNewRoom,
 }: SidebarProps) {
@@ -88,16 +89,20 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="border-t border-neutral-300 p-3 dark:border-neutral-800">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs uppercase tracking-wide text-neutral-500">Your name</span>
-          <input
-            value={userName}
-            onChange={(e) => onUserNameChange(e.target.value)}
-            placeholder="anurag"
-            className="border border-neutral-400 bg-transparent px-2 py-1 text-sm outline-none focus:border-foreground dark:border-neutral-700"
-          />
-        </label>
+      <div className="flex items-center justify-between gap-2 border-t border-neutral-300 p-3 dark:border-neutral-800">
+        <div className="min-w-0">
+          <p className="truncate text-sm">{identityName(identity)}</p>
+          <p className="truncate text-[10px] uppercase tracking-wide text-neutral-500">
+            {identity.kind === "guest" ? "guest" : identity.user.email}
+          </p>
+        </div>
+        <button
+          onClick={onLogout}
+          title={identity.kind === "guest" ? "Leave guest mode" : "Log out"}
+          className="shrink-0 border border-neutral-400 px-2 py-1 text-xs transition-colors hover:bg-foreground hover:text-background dark:border-neutral-700"
+        >
+          {identity.kind === "guest" ? "Exit" : "Log out"}
+        </button>
       </div>
     </aside>
   );

@@ -5,22 +5,29 @@ import type { ClientMsg, ServerMsg, Card } from "@symposium/protocol";
 import { Sidebar } from "@/components/Sidebar";
 import { Lobby } from "@/components/Lobby";
 import { RoomView } from "@/components/RoomView";
+import { AuthScreen } from "@/components/AuthScreen";
 import type { ChatLine } from "@/components/Chat";
 import {
   loadRecents,
   saveRecent,
-  loadUserName,
-  saveUserName,
   saveSnapshot,
   loadSnapshot,
   type RoomRef,
 } from "@/lib/history";
-
-const WS_URL = "ws://localhost:4000";
+import {
+  loadIdentity,
+  saveIdentity,
+  clearIdentity,
+  identityName,
+  wsUrlFor,
+  type Identity,
+} from "@/lib/auth";
 
 export default function Home() {
+  const [ready, setReady] = useState(false); // localStorage is unavailable during SSR
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [authNotice, setAuthNotice] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [userName, setUserName] = useState("");
   const [recents, setRecents] = useState<RoomRef[]>([]);
   const [room, setRoom] = useState<{ roomId: string; name: string } | null>(null);
   const [connected, setConnected] = useState(false); // false while viewing a frozen (left) room
@@ -31,12 +38,12 @@ export default function Home() {
   const [cardDraft, setCardDraft] = useState("");
   const [error, setError] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
-  const joinAsRef = useRef(""); // the display name to join with (avoids stale closures)
 
-  // localStorage isn't available during SSR → load per-browser state after mount
+  // load per-browser state after mount, then reveal the UI (avoids flashing the auth screen)
   useEffect(() => {
-    setUserName(loadUserName());
+    setIdentity(loadIdentity());
     setRecents(loadRecents());
+    setReady(true);
   }, []);
 
   // while connected, keep the room's last-seen snapshot fresh so leaving freezes an accurate view
@@ -46,21 +53,39 @@ export default function Home() {
     }
   }, [connected, room, cards, chat, members]);
 
-  function changeUserName(name: string) {
-    setUserName(name);
-    saveUserName(name);
-  }
-
   function remember(ref: RoomRef) {
     setRecents(saveRecent(ref));
+  }
+
+  function authenticate(next: Identity) {
+    saveIdentity(next);
+    setIdentity(next);
+    setAuthNotice("");
+  }
+
+  function clearRoomState() {
+    setRoom(null);
+    setConnected(false);
+    setMembers([]);
+    setCards([]);
+    setChat([]);
+    setError("");
+  }
+
+  function logout() {
+    wsRef.current?.close();
+    wsRef.current = null;
+    clearIdentity();
+    setIdentity(null);
+    setAuthNotice("");
+    clearRoomState();
   }
 
   function handleServerMsg(msg: ServerMsg) {
     if (msg.type === "room.created") {
       remember({ roomId: msg.roomId, name: msg.name });
-      wsRef.current?.send(
-        JSON.stringify({ type: "join", roomId: msg.roomId, name: joinAsRef.current } satisfies ClientMsg),
-      );
+      // the socket already carries our identity — joining only needs the room
+      wsRef.current?.send(JSON.stringify({ type: "join", roomId: msg.roomId } satisfies ClientMsg));
     } else if (msg.type === "board.snapshot") {
       setRoom({ roomId: msg.roomId, name: msg.name });
       setConnected(true); // we are now live
@@ -81,29 +106,36 @@ export default function Home() {
   }
 
   // open a fresh socket (closing any current one — a socket is bound to one room) + send the first message
-  function openSocket(firstMessage: ClientMsg) {
+  function openSocket(id: Identity, firstMessage: ClientMsg) {
     wsRef.current?.close();
     setError("");
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(wsUrlFor(id)); // identity rides in the connect URL
     wsRef.current = ws;
     ws.onopen = () => ws.send(JSON.stringify(firstMessage));
     ws.onmessage = (e) => handleServerMsg(JSON.parse(e.data) as ServerMsg);
     ws.onerror = () => setError("Couldn't reach the server — is the backend running on :4000?");
+    ws.onclose = (e) => {
+      // 4001 = the server refused our identity (bad or expired token) → force a fresh login
+      if (e.code === 4001) {
+        clearIdentity();
+        setIdentity(null);
+        clearRoomState();
+        setAuthNotice("Your session expired — please log in again.");
+      }
+    };
   }
 
   function createRoom(name: string) {
-    if (!userName.trim()) return setError("Set your name in the sidebar first.");
+    if (!identity) return;
     if (!name.trim()) return setError("Give the room a name.");
-    joinAsRef.current = userName.trim();
-    openSocket({ type: "room.create", name: name.trim() });
+    openSocket(identity, { type: "room.create", name: name.trim() });
   }
 
   // go live in a room by code (from the lobby, or the Join button in a frozen view)
   function joinRoom(roomId: string) {
-    if (!userName.trim()) return setError("Set your name in the sidebar first.");
+    if (!identity) return;
     if (!roomId.trim()) return setError("Enter a room code.");
-    joinAsRef.current = userName.trim();
-    openSocket({ type: "join", roomId: roomId.trim(), name: userName.trim() });
+    openSocket(identity, { type: "join", roomId: roomId.trim() });
   }
 
   // open a room from history WITHOUT connecting → frozen, read-only, last-seen view
@@ -131,12 +163,7 @@ export default function Home() {
   function goToLobby() {
     wsRef.current?.close();
     wsRef.current = null;
-    setRoom(null);
-    setConnected(false);
-    setMembers([]);
-    setCards([]);
-    setChat([]);
-    setError("");
+    clearRoomState();
   }
 
   function sendChat() {
@@ -153,6 +180,9 @@ export default function Home() {
     setCardDraft("");
   }
 
+  if (!ready) return null;
+  if (!identity) return <AuthScreen notice={authNotice} onAuthenticated={authenticate} />;
+
   return (
     <div className="flex min-h-0 flex-1">
       <Sidebar
@@ -160,8 +190,8 @@ export default function Home() {
         onToggle={() => setSidebarOpen((v) => !v)}
         recents={recents}
         currentRoomId={room?.roomId ?? null}
-        userName={userName}
-        onUserNameChange={changeUserName}
+        identity={identity}
+        onLogout={logout}
         onOpenRoom={(roomId) => {
           const ref = recents.find((r) => r.roomId === roomId);
           openRecent(roomId, ref?.name ?? roomId);
@@ -173,7 +203,7 @@ export default function Home() {
         <RoomView
           roomName={room.name}
           roomId={room.roomId}
-          userName={userName}
+          userName={identityName(identity)}
           frozen={!connected}
           members={members}
           cards={cards}
@@ -188,7 +218,7 @@ export default function Home() {
           onJoin={() => joinRoom(room.roomId)}
         />
       ) : (
-        <Lobby userName={userName} error={error} onCreate={createRoom} onJoin={joinRoom} />
+        <Lobby userName={identityName(identity)} error={error} onCreate={createRoom} onJoin={joinRoom} />
       )}
     </div>
   );
