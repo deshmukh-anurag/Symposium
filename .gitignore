@@ -7,6 +7,9 @@ dist/
 out/
 *.tsbuildinfo
 
+# prisma generated client (regenerated from schema via `prisma generate`)
+packages/db/src/generated/
+
 # caches
 .turbo/
 coverage/

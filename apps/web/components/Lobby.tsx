@@ -17,9 +17,7 @@ export function Lobby({ userName, error, onCreate, onJoin }: LobbyProps) {
         <div>
           <h1 className="font-mono text-xl font-semibold tracking-tight">SYMPOSIUM</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            {userName
-              ? `Welcome, ${userName}. Create a room or join one by code.`
-              : "Set your name in the sidebar, then create or join a room."}
+            Welcome, {userName}. Create a room or join one by code.
           </p>
         </div>
 

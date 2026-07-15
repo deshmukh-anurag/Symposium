@@ -16,7 +16,6 @@ export type RoomSnapshot = {
 };
 
 const RECENTS_KEY = "symposium.recents";
-const NAME_KEY = "symposium.userName";
 
 export function loadRecents(): RoomRef[] {
   try {
@@ -33,14 +32,6 @@ export function saveRecent(room: RoomRef): RoomRef[] {
   const next = [room, ...rest].slice(0, 20);
   localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
   return next;
-}
-
-export function loadUserName(): string {
-  return localStorage.getItem(NAME_KEY) ?? "";
-}
-
-export function saveUserName(name: string): void {
-  localStorage.setItem(NAME_KEY, name);
 }
 
 const snapKey = (roomId: string) => `symposium.snap.${roomId}`;
