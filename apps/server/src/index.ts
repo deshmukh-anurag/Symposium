@@ -2,9 +2,12 @@ import "dotenv/config"; // MUST be first — load env before anything imports Pr
 import express from "express";
 import authRouter from "./routes/auth";
 import { attachRealtime } from "./realtime/server";
-
-const app = express();
+import cors from "cors";
 const PORT = 4000;
+const app = express();
+app.use(cors({ origin: "http://localhost:3000" })); // let the web app read our responses
+app.use(express.json());
+
 
 app.use(express.json());
 
