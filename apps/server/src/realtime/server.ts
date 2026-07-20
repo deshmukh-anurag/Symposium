@@ -22,6 +22,28 @@ function toWireCard(row: { id: string; text: string; authorName: string; seq: nu
   return { id: row.id, text: row.text, createdBy: row.authorName, seq: row.seq };
 }
 
+async function getOrHydrateRoom(roomId: string): Promise<Room | null> {
+  const cached = rooms.get(roomId);
+  if (cached) return cached;                    // hot path — no DB
+
+  const row = await prisma.room.findUnique({
+    where: { id: roomId },
+    include: { cards: { orderBy: { seq: "asc" } } },   // one query, not two
+  });
+  if (!row) return null;                        // truly doesn't exist
+
+  const cards = row.cards.map(toWireCard);
+  const room: Room = {
+    name: row.name,
+    clients: new Set(),                         // nobody is connected to a just-loaded room
+    cards,
+    seq: cards.length ? cards[cards.length - 1].seq : 0,   // ← resume the clock
+  };
+  rooms.set(roomId, room);                      // cache it for next time
+  return room;
+}
+
+
 function send(socket: WebSocket, msg: ServerMsg) {
   socket.send(JSON.stringify(msg));
 }
@@ -94,7 +116,7 @@ export function attachRealtime(server: Server) {
         send(socket, { type: "room.created", roomId, name: msg.name });
 
       } else if (msg.type === "join") {
-        const room = rooms.get(msg.roomId);
+        const room = await getOrHydrateRoom(msg.roomId);   // ← Map hit, else DB, else null
         if (!room) {
           return send(socket, { type: "error", code: "room_not_found", message: `No room with id "${msg.roomId}".` });
         }
@@ -102,7 +124,8 @@ export function attachRealtime(server: Server) {
         room.clients.add(me);
         send(socket, { type: "board.snapshot", roomId: myRoom, name: room.name, cards: room.cards });
         broadcastPresence(myRoom);
-      } else if (msg.type === "chat") {
+      }
+ else if (msg.type === "chat") {
         if (!myRoom) return send(socket, { type: "error", message: "join a room first" });
         await prisma.message.create({
           data: {
