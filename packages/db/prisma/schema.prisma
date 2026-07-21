@@ -7,6 +7,11 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")      // read the connection string from the environment
 }
+enum AuthorKind {
+  USER
+  GUEST
+  AGENT      // the agent has no User row either — same shape as a guest
+}
 
 model User {
   id        String   @id @default(uuid())   // primary key, auto-generated UUID
@@ -14,4 +19,51 @@ model User {
   name      String                          // display name
   password  String                          // a HASH — never the plaintext (step 3)
   createdAt DateTime @default(now())
+  rooms    Room[]
+  cards    Card[]
+  messages Message[]
+}
+
+
+model Room {
+  id        String   @id                  // the 6-char code — the server mints it, not @default(uuid())
+  name      String
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id])
+  createdAt DateTime @default(now())
+
+  cards    Card[]
+  messages Message[]
+}
+
+model Card {
+  id          String     @id @default(uuid())
+  roomId      String
+  room        Room       @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  text        String
+  seq         Int                          // per-room logical clock (for Last-Writer-Wins)
+  authorId    String?                      // null for guests AND the agent
+  author      User?      @relation(fields: [authorId], references: [id])
+  authorName  String                       // snapshot at write time — survives renames
+  authorKind  AuthorKind @default(USER)
+  sourceUrl   String?                      // the citation — agent cards fill this
+  sourceTitle String?
+  createdAt   DateTime   @default(now())
+
+  @@unique([roomId, seq])                  // ← read the gotcha below
+  @@index([roomId])
+}
+
+model Message {
+  id         String     @id @default(uuid())
+  roomId     String
+  room       Room       @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  text       String
+  authorId   String?
+  author     User?      @relation(fields: [authorId], references: [id])
+  authorName String
+  authorKind AuthorKind @default(USER)
+  createdAt  DateTime   @default(now())
+
+  @@index([roomId, createdAt])
 }
