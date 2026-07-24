@@ -13,6 +13,9 @@ type RoomViewProps = {
   cardDraft: string;
   onCardDraftChange: (value: string) => void;
   onAddCard: () => void;
+  askDraft: string;
+  onAskDraftChange: (value: string) => void;
+  onAsk: () => void;
   chat: ChatLine[];
   chatDraft: string;
   onChatDraftChange: (value: string) => void;
@@ -31,6 +34,9 @@ export function RoomView({
   cardDraft,
   onCardDraftChange,
   onAddCard,
+  askDraft,
+  onAskDraftChange,
+  onAsk,
   chat,
   chatDraft,
   onChatDraftChange,
@@ -69,6 +75,27 @@ export function RoomView({
           )}
         </div>
       </header>
+
+      {!frozen && (
+        <div className="flex items-center gap-2 border-b border-neutral-300 p-3 dark:border-neutral-800">
+          <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-neutral-500">
+            Ask AI
+          </span>
+          <input
+            value={askDraft}
+            onChange={(e) => onAskDraftChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && onAsk()}
+            placeholder="Ask a question — the agent researches and streams sourced cards onto the board…"
+            className="flex-1 border border-neutral-400 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-neutral-700"
+          />
+          <button
+            onClick={onAsk}
+            className="border border-foreground px-4 py-2 text-sm transition-colors hover:bg-foreground hover:text-background"
+          >
+            Research
+          </button>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <Presence members={members} currentName={userName} />
