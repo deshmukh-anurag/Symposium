@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { Card } from "@symposium/protocol";
 
 // pretty label for a source link: the page title, else a clean hostname
@@ -15,11 +18,29 @@ type BoardProps = {
   draft: string;
   onDraftChange: (value: string) => void;
   onAddCard: () => void;
+  onEditCard: (id: string, text: string) => void;
   disabled?: boolean; // frozen (left) → read-only
   onJoin?: () => void;
 };
 
-export function Board({ cards, draft, onDraftChange, onAddCard, disabled, onJoin }: BoardProps) {
+export function Board({ cards, draft, onDraftChange, onAddCard, onEditCard, disabled, onJoin }: BoardProps) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+
+  function startEdit(card: Card) {
+    if (disabled) return; // can't edit a frozen (left) board
+    setEditingId(card.id);
+    setEditDraft(card.text);
+  }
+
+  // commit only if the text actually changed → avoids a pointless LWW edit on blur
+  function commitEdit(id: string) {
+    const next = editDraft.trim();
+    const original = cards.find((c) => c.id === id);
+    setEditingId(null);
+    if (next && original && next !== original.text) onEditCard(id, next);
+  }
+
   return (
     <section className="flex min-h-0 flex-1 flex-col border-r border-neutral-300 dark:border-neutral-800">
       {disabled ? (
@@ -54,33 +75,66 @@ export function Board({ cards, draft, onDraftChange, onAddCard, disabled, onJoin
           <p className="text-sm text-neutral-500">The board is empty. Add the first card ↑</p>
         ) : (
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]">
-            {cards.map((card) => (
-              <div
-                key={card.id}
-                className="flex flex-col border border-neutral-300 p-3 dark:border-neutral-800"
-              >
-                {card.authorKind === "AGENT" && (
-                  <span className="mb-2 w-fit bg-foreground px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-background">
-                    AI
-                  </span>
-                )}
-                <p className="flex-1 text-sm break-words">{card.text}</p>
-                {card.sourceUrl && (
-                  <a
-                    href={card.sourceUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={card.sourceUrl}
-                    className="mt-2 block truncate font-mono text-[10px] text-neutral-500 underline underline-offset-2 hover:text-foreground"
-                  >
-                    ↗ {sourceLabel(card)}
-                  </a>
-                )}
-                <p className="mt-3 font-mono text-[10px] uppercase tracking-wide text-neutral-500">
-                  by {card.createdBy} · #{card.seq}
-                </p>
-              </div>
-            ))}
+            {cards.map((card) => {
+              const editing = editingId === card.id;
+              return (
+                <div
+                  key={card.id}
+                  className="flex flex-col border border-neutral-300 p-3 dark:border-neutral-800"
+                >
+                  {card.authorKind === "AGENT" && (
+                    <span className="mb-2 w-fit bg-foreground px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-background">
+                      AI
+                    </span>
+                  )}
+
+                  {editing ? (
+                    <textarea
+                      autoFocus
+                      value={editDraft}
+                      onChange={(e) => setEditDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault(); // Enter saves; Shift+Enter = newline
+                          commitEdit(card.id);
+                        } else if (e.key === "Escape") {
+                          setEditingId(null); // discard the draft
+                        }
+                      }}
+                      onBlur={() => commitEdit(card.id)}
+                      rows={3}
+                      className="flex-1 resize-none border border-foreground bg-transparent p-1 text-sm outline-none"
+                    />
+                  ) : (
+                    <p
+                      onClick={() => startEdit(card)}
+                      title={disabled ? undefined : "Click to edit · Enter saves · Esc cancels"}
+                      className={`flex-1 text-sm break-words ${
+                        disabled ? "" : "cursor-text hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                      }`}
+                    >
+                      {card.text}
+                    </p>
+                  )}
+
+                  {card.sourceUrl && !editing && (
+                    <a
+                      href={card.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={card.sourceUrl}
+                      className="mt-2 block truncate font-mono text-[10px] text-neutral-500 underline underline-offset-2 hover:text-foreground"
+                    >
+                      ↗ {sourceLabel(card)}
+                    </a>
+                  )}
+
+                  <p className="mt-3 font-mono text-[10px] uppercase tracking-wide text-neutral-500">
+                    by {card.createdBy} · #{card.seq}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

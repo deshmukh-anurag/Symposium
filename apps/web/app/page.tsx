@@ -101,6 +101,9 @@ export default function Home() {
       setChat((prev) => [...prev, { from: msg.from, text: msg.text }]);
     } else if (msg.type === "card.created") {
       setCards((prev) => [...prev, msg.card]);
+    } else if (msg.type === "card.updated") {
+      // LWW: replace our copy with the server's new version of that card
+      setCards((prev) => prev.map((c) => (c.id === msg.card.id ? msg.card : c)));
     } else if (msg.type === "error") {
       setError(msg.message);
     }
@@ -189,6 +192,11 @@ export default function Home() {
     setAskDraft("");
   }
 
+  // edit a card — server applies Last-Writer-Wins and broadcasts card.updated to everyone
+  function editCard(id: string, text: string) {
+    wsRef.current?.send(JSON.stringify({ type: "card.edit", id, text } satisfies ClientMsg));
+  }
+
   if (!ready) return null;
   if (!identity) return <AuthScreen notice={authNotice} onAuthenticated={authenticate} />;
 
@@ -219,6 +227,7 @@ export default function Home() {
           cardDraft={cardDraft}
           onCardDraftChange={setCardDraft}
           onAddCard={addCard}
+          onEditCard={editCard}
           askDraft={askDraft}
           onAskDraftChange={setAskDraft}
           onAsk={askAI}
