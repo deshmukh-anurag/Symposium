@@ -4,6 +4,7 @@ import { verifyToken } from "../lib/jwt";
 import type { Server } from "node:http";
 import { ClientMsg, type ServerMsg, type Card } from "@symposium/protocol";
 import { prisma } from "@symposium/db";
+import { runAgent } from "../agent";
 // ---- in-memory room state ----
 type Client = { socket: WebSocket; name: string; userId: string | null };
 
@@ -18,8 +19,24 @@ async function newRoomId(): Promise<string> {
   }
 }
 
-function toWireCard(row: { id: string; text: string; authorName: string; seq: number }): Card {
-  return { id: row.id, text: row.text, createdBy: row.authorName, seq: row.seq };
+function toWireCard(row: {
+  id: string;
+  text: string;
+  authorName: string;
+  seq: number;
+  authorKind: string;
+  sourceUrl: string | null;
+  sourceTitle: string | null;
+}): Card {
+  return {
+    id: row.id,
+    text: row.text,
+    createdBy: row.authorName,
+    seq: row.seq,
+    authorKind: row.authorKind as Card["authorKind"],
+    sourceUrl: row.sourceUrl ?? undefined,
+    sourceTitle: row.sourceTitle ?? undefined,
+  };
 }
 
 async function getOrHydrateRoom(roomId: string): Promise<Room | null> {
@@ -59,6 +76,40 @@ function broadcastPresence(roomId: string) {
   if (!room) return;
   const members = [...room.clients].map((c) => c.name);
   broadcast(roomId, { type: "presence", roomId, members });
+}
+
+// Persist ONE card, cache it, and broadcast it — the single write-through path.
+// Humans (card.create) and the agent (ask) both go through here, so a human card
+// and an AI card are created identically; only the author fields differ.
+async function createCard(
+  roomId: string,
+  input: {
+    text: string;
+    authorId: string | null;
+    authorName: string;
+    authorKind: "USER" | "GUEST" | "AGENT";
+    sourceUrl?: string;
+    sourceTitle?: string;
+  },
+): Promise<Card | null> {
+  const room = rooms.get(roomId);
+  if (!room) return null; // room fell out of the cache / never existed
+  const row = await prisma.card.create({
+    data: {
+      roomId,
+      text: input.text,
+      seq: ++room.seq, // per-room logical clock
+      authorId: input.authorId, // null for guests AND the agent — schema allows it
+      authorName: input.authorName,
+      authorKind: input.authorKind,
+      sourceUrl: input.sourceUrl ?? null,
+      sourceTitle: input.sourceTitle ?? null,
+    },
+  });
+  const card = toWireCard(row);
+  room.cards.push(card);
+  broadcast(roomId, { type: "card.created", roomId, card });
+  return card;
 }
 
 // attach the WebSocket server onto the existing HTTP server (shared port)
@@ -140,21 +191,40 @@ export function attachRealtime(server: Server) {
 
       } else if (msg.type === "card.create") {
         if (!myRoom) return send(socket, { type: "error", message: "join a room first" });
-        const room = rooms.get(myRoom);
-        if (!room) return;
-        const row = await prisma.card.create({
-          data: {
-            roomId: myRoom,
-            text: msg.text,
-            seq: ++room.seq,
-            authorId: me.userId,                                // null for guests — the schema allows it
-            authorName: me.name,                                // the snapshot
-            authorKind: me.userId ? "USER" : "GUEST",
-          },
+        await createCard(myRoom, {
+          text: msg.text,
+          authorId: me.userId, // null for guests — the schema allows it
+          authorName: me.name,
+          authorKind: me.userId ? "USER" : "GUEST",
         });
-        const card = toWireCard(row);
-        room.cards.push(card);
-        broadcast(myRoom, { type: "card.created", roomId: myRoom, card });
+
+      } else if (msg.type === "ask") {
+        if (!myRoom) return send(socket, { type: "error", message: "join a room first" });
+        const roomId = myRoom; // capture now — myRoom could change if they later rejoin elsewhere
+
+        // let the room know the agent started (ephemeral status line, not persisted)
+        broadcast(roomId, { type: "chat", roomId, from: "AI", text: `🔬 Researching: ${msg.text}` });
+
+        // Fire-and-forget: do NOT await. The agent loop can take many seconds, and this
+        // socket must stay responsive (chat, cards, presence) while it runs in the background.
+        // The .catch is MANDATORY — an unhandled promise rejection would crash the whole server.
+        runAgent({
+          question: msg.text,
+          onCard: async ({ text, sourceUrl, sourceTitle }) => {
+            await createCard(roomId, {
+              text,
+              authorId: null, // the agent has no user account
+              authorName: "AI",
+              authorKind: "AGENT",
+              sourceUrl,
+              sourceTitle,
+            });
+          },
+          onNotice: (text) => broadcast(roomId, { type: "chat", roomId, from: "AI", text }),
+        }).catch((err) => {
+          console.error("agent run failed:", err);
+          broadcast(roomId, { type: "chat", roomId, from: "AI", text: "⚠️ Research failed — see server logs." });
+        });
       }
     });
 

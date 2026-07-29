@@ -36,6 +36,7 @@ export default function Home() {
   const [chat, setChat] = useState<ChatLine[]>([]);
   const [chatDraft, setChatDraft] = useState("");
   const [cardDraft, setCardDraft] = useState("");
+  const [askDraft, setAskDraft] = useState("");
   const [error, setError] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -180,6 +181,14 @@ export default function Home() {
     setCardDraft("");
   }
 
+  // ask the AI to research — the agent runs on the server and streams cards back live
+  function askAI() {
+    const text = askDraft.trim();
+    if (!text) return;
+    wsRef.current?.send(JSON.stringify({ type: "ask", text } satisfies ClientMsg));
+    setAskDraft("");
+  }
+
   if (!ready) return null;
   if (!identity) return <AuthScreen notice={authNotice} onAuthenticated={authenticate} />;
 
@@ -210,6 +219,9 @@ export default function Home() {
           cardDraft={cardDraft}
           onCardDraftChange={setCardDraft}
           onAddCard={addCard}
+          askDraft={askDraft}
+          onAskDraftChange={setAskDraft}
+          onAsk={askAI}
           chat={chat}
           chatDraft={chatDraft}
           onChatDraftChange={setChatDraft}

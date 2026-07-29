@@ -1,5 +1,15 @@
 import type { Card } from "@symposium/protocol";
 
+// pretty label for a source link: the page title, else a clean hostname
+function sourceLabel(card: Card): string {
+  if (card.sourceTitle) return card.sourceTitle;
+  try {
+    return new URL(card.sourceUrl!).hostname.replace(/^www\./, "");
+  } catch {
+    return card.sourceUrl!;
+  }
+}
+
 type BoardProps = {
   cards: Card[];
   draft: string;
@@ -49,7 +59,23 @@ export function Board({ cards, draft, onDraftChange, onAddCard, disabled, onJoin
                 key={card.id}
                 className="flex flex-col border border-neutral-300 p-3 dark:border-neutral-800"
               >
+                {card.authorKind === "AGENT" && (
+                  <span className="mb-2 w-fit bg-foreground px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-background">
+                    AI
+                  </span>
+                )}
                 <p className="flex-1 text-sm break-words">{card.text}</p>
+                {card.sourceUrl && (
+                  <a
+                    href={card.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={card.sourceUrl}
+                    className="mt-2 block truncate font-mono text-[10px] text-neutral-500 underline underline-offset-2 hover:text-foreground"
+                  >
+                    ↗ {sourceLabel(card)}
+                  </a>
+                )}
                 <p className="mt-3 font-mono text-[10px] uppercase tracking-wide text-neutral-500">
                   by {card.createdBy} · #{card.seq}
                 </p>
