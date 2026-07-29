@@ -49,6 +49,7 @@ model Card {
   sourceUrl   String?                      // the citation — agent cards fill this
   sourceTitle String?
   createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @default(now()) @updatedAt  // LWW timestamp: @updatedAt bumps it on every edit; @default backfills existing rows
 
   @@unique([roomId, seq])                  // ← read the gotcha below
   @@index([roomId])

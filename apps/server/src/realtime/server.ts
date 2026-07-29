@@ -112,6 +112,26 @@ async function createCard(
   return card;
 }
 
+// Last-Writer-Wins edit: overwrite the text, let @updatedAt bump the timestamp,
+// update the cached copy, and broadcast. Any member may edit any card. In our
+// single-server model the server's ARRIVAL ORDER is "last writer" — so we just
+// apply edits as they land and every client converges by replaying the same
+// card.updated broadcasts in the same order. Returns null if the card isn't here.
+async function editCard(roomId: string, cardId: string, text: string): Promise<Card | null> {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const idx = room.cards.findIndex((c) => c.id === cardId); // also proves the card belongs to THIS room
+  if (idx === -1) return null;
+  const row = await prisma.card.update({
+    where: { id: cardId },
+    data: { text }, // @updatedAt updates the timestamp automatically
+  });
+  const card = toWireCard(row);
+  room.cards[idx] = card; // replace the cached copy in place (keep board order)
+  broadcast(roomId, { type: "card.updated", roomId, card });
+  return card;
+}
+
 // attach the WebSocket server onto the existing HTTP server (shared port)
 export function attachRealtime(server: Server) {
   const wss = new WebSocketServer({ server });
@@ -176,7 +196,7 @@ export function attachRealtime(server: Server) {
         send(socket, { type: "board.snapshot", roomId: myRoom, name: room.name, cards: room.cards });
         broadcastPresence(myRoom);
       }
- else if (msg.type === "chat") {
+        else if (msg.type === "chat") {
         if (!myRoom) return send(socket, { type: "error", message: "join a room first" });
         await prisma.message.create({
           data: {
@@ -225,6 +245,11 @@ export function attachRealtime(server: Server) {
           console.error("agent run failed:", err);
           broadcast(roomId, { type: "chat", roomId, from: "AI", text: "⚠️ Research failed — see server logs." });
         });
+
+      } else if (msg.type === "card.edit") {
+        if (!myRoom) return send(socket, { type: "error", message: "join a room first" });
+        const updated = await editCard(myRoom, msg.id, msg.text);
+        if (!updated) return send(socket, { type: "error", message: "card not found" });
       }
     });
 

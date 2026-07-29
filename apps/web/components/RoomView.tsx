@@ -13,6 +13,7 @@ type RoomViewProps = {
   cardDraft: string;
   onCardDraftChange: (value: string) => void;
   onAddCard: () => void;
+  onEditCard: (id: string, text: string) => void;
   askDraft: string;
   onAskDraftChange: (value: string) => void;
   onAsk: () => void;
@@ -34,6 +35,7 @@ export function RoomView({
   cardDraft,
   onCardDraftChange,
   onAddCard,
+  onEditCard,
   askDraft,
   onAskDraftChange,
   onAsk,
@@ -104,6 +106,7 @@ export function RoomView({
           draft={cardDraft}
           onDraftChange={onCardDraftChange}
           onAddCard={onAddCard}
+          onEditCard={onEditCard}
           disabled={frozen}
           onJoin={onJoin}
         />
