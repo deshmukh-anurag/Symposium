@@ -1,8 +1,10 @@
 // Who this browser is: either a real account (proven by a JWT the server minted at login)
 // or a guest (just a name, unverified). Stored per-browser in localStorage.
 
-const API_URL = "http://localhost:4000";
-const WS_URL = "ws://localhost:4000";
+// In prod (Vercel) set these to the deployed Render server: https://…onrender.com and wss://…onrender.com.
+// NEXT_PUBLIC_ = baked into the browser bundle at build time. Falls back to localhost for dev.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:4000";
 const IDENTITY_KEY = "symposium.identity";
 
 export type AuthUser = { id: string; email: string; name: string };
