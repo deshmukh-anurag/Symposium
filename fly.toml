@@ -1,0 +1,32 @@
+# Fly.io config for the Symposium server (Express + WebSockets), built from the monorepo.
+# `fly deploy` (run from the repo root) reads this file.
+
+app = "symposium-server"          # must be GLOBALLY unique on Fly — if taken, change it (e.g. symposium-server-anurag)
+primary_region = "bom"            # Mumbai. Pick your nearest with: fly platform regions
+
+[build]
+  dockerfile = "apps/server/Dockerfile"   # build context is this repo root (where this file lives)
+
+[env]
+  PORT = "8080"                   # our server reads process.env.PORT; MUST match internal_port below
+
+# A "release command" runs in a temporary machine AFTER the image builds but BEFORE
+# the new version goes live — with your secrets available. The perfect place to
+# apply pending DB migrations exactly once per deploy.
+[deploy]
+  release_command = "npx prisma migrate deploy --schema packages/db/prisma/schema.prisma"
+
+[http_service]
+  internal_port = 8080
+  force_https = true              # http→https, so browsers use wss:// for the WebSocket
+  auto_stop_machines = "stop"     # scale to ZERO when idle → your trial credit only burns while in use (this is the "nap", but YOUR choice)
+  auto_start_machines = true      # wake automatically on the next request
+  min_machines_running = 0        # set to 1 later if you want always-on (costs more credit)
+
+  # Fly pings this to know the server is healthy — your existing /health route.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/health"

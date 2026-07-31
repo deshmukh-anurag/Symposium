@@ -1,0 +1,7 @@
+# Keep the build context small and NEVER bake these into the image.
+**/node_modules
+.git
+**/.env          # ← critical: your local secrets must NOT enter the image (prod uses Fly secrets)
+*.log
+**/.next          # the web app's build output — the server image doesn't need the web app
+packages/db/src/generated   # regenerated during the Docker build (prisma generate)
