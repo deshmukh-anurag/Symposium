@@ -9,7 +9,9 @@ const PORT = Number(process.env.PORT) || 4000;
 
 // In prod, set CORS_ORIGIN to the deployed web URL (comma-separated allows more than one).
 // Falls back to localhost so `npm run dev` still works unchanged.
-const CORS_ORIGINS = (process.env.CORS_ORIGIN ?? "http://localhost:3000")
+const CORS_ORIGINS = (process.env.CORS_ORIGIN ?? "http://localhost:3000",
+  "https://symposium-web.vercel.app/"
+)
   .split(",")
   .map((o) => o.trim());
 
